@@ -1,0 +1,17 @@
+# Goal — 发送给 YOLO 检测节点的指令
+string target_class       # 要找的物体，如 "cat"、"person"、"cup"
+int32 duration_sec        # 持续检测多少秒（0 = 只检测一帧）
+---
+# Result — YOLO 最终返回
+bool detected             # 是否找到
+string best_class         # 找到的物体类别名
+float32 best_confidence   # 最高置信度
+int32 bbox_x              # 边界框左上角 x
+int32 bbox_y              # 边界框左上角 y
+int32 bbox_w              # 边界框宽度
+int32 bbox_h              # 边界框高度
+---
+# Feedback — 检测过程中的实时反馈
+int32 elapsed_sec         # 已经运行了多久
+string[] all_objects      # 当前画面中检测到的所有物体
+float32 progress          # 进度 0.0 ~ 1.0

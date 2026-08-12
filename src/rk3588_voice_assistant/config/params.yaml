@@ -1,0 +1,23 @@
+/llm_node:
+  ros__parameters:
+    model_path: /home/topeet/code/rkllm_weight/Qwen3.5-0.8B_w8a8_rk3588.rkllm
+    max_tokens: 128
+    context_len: 512
+
+/asr_node:
+  ros__parameters:
+    asr_model_dir: /home/topeet/code/rkllm_weight
+
+/audio_vad_node:
+  ros__parameters:
+    mic_device: "plughw:2,0"
+    sample_rate: 44100
+    channels: 2
+
+/yolo_node:
+  ros__parameters:
+    model_path: /home/topeet/code/rkllm_weight/yolo26n_split.rknn
+    conf_threshold: 0.25
+    camera_device: /dev/video11
+    camera_width: 1920
+    camera_height: 1080
