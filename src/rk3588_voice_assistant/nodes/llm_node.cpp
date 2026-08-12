@@ -2,6 +2,9 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rk3588_voice_assistant/llm_node.hpp"
 #include "llm/rkllm_engine.hpp"
+#include <algorithm>
+#include <cctype>
+#include <cstring>
 
 LlmNode::LlmNode(const rclcpp::NodeOptions& options)
     : LifecycleNode("llm_node", options) {
@@ -79,16 +82,40 @@ void LlmNode::onReset(const std_srvs::srv::Empty::Request::SharedPtr,
 // ---- 意图识别 ----
 std::string LlmNode::extractDetectTarget(const std::string& text) {
     // 匹配: "找X" "寻找X" "找一下X" "find X" "检测X"
+    // 注意: std::regex 是字节级、不懂 Unicode，不能用 $ 锚点 + 多字节标点，
+    //       否则 "找苹果。" 会把 UTF-8 拆碎、尾部换行/空格会导致不匹配。
+    // 做法: 先去首尾空白 → 正则抓 \S+ → 再去尾部标点。
+    std::string t = text;
+    auto is_space = [](unsigned char c) { return std::isspace(c); };
+    t.erase(t.begin(), std::find_if(t.begin(), t.end(),
+        [&](unsigned char c) { return !is_space(c); }));
+    t.erase(std::find_if(t.rbegin(), t.rend(),
+        [&](unsigned char c) { return !is_space(c); }).base(), t.end());
+    if (t.empty()) return "";
+
     static const std::regex re(
-        R"(找(?:一下|一个)?(\S+?)[。！？\.\!\?]?$|寻找(\S+)|^find\s+(\S+)|检测(\S+))",
+        R"((?:找(?:一下|一个)?|寻找|检测|find)\s*(\S+))",
         std::regex::icase);
     std::smatch m;
-    if (std::regex_search(text, m, re)) {
-        for (int i = 1; i <= 4; i++) {
-            if (m[i].matched && !m[i].str().empty()) return m[i].str();
+    if (!std::regex_search(t, m, re)) return "";
+    std::string target = m[1].str();
+
+    // 去尾部常见标点（字节级安全，避免拆碎 UTF-8）
+    static const char* suffix[] = {
+        "。", "！", "？", "、", "，", ".", "!", "?", ",", ";", ":", "～", "~"};
+    for (;;) {
+        bool hit = false;
+        for (auto s : suffix) {
+            size_t n = std::strlen(s);
+            if (target.size() >= n && target.compare(target.size() - n, n, s) == 0) {
+                target.erase(target.size() - n);
+                hit = true;
+                break;
+            }
         }
+        if (!hit) break;
     }
-    return "";
+    return target;
 }
 
 // ---- 调用 YOLO ----

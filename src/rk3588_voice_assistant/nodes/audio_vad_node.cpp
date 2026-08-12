@@ -127,8 +127,12 @@ void AudioVadNode::onTrigger(const std_msgs::msg::Empty::SharedPtr /*msg*/) {
             while (vadBuf.size() >= static_cast<size_t>(kFrame)) {
                 bool v = vad_->IsVoice(vadBuf.data(), kFrame);
                 vadBuf.erase(vadBuf.begin(), vadBuf.begin() + kFrame);
-                if (state == kPending) { if (v && ++speechFrames >= kMinSpeech) state = kSpeaking; else speechFrames = 0; }
-                else { if (v) silenceFrames = 0; else if (++silenceFrames >= kSilence) goto done; }
+                if (state == kPending) {
+                    if (v) { if (++speechFrames >= kMinSpeech) state = kSpeaking; }
+                    else speechFrames = 0;
+                } else {
+                    if (v) silenceFrames = 0; else if (++silenceFrames >= kSilence) goto done;
+                }
             }
         }
 #endif
