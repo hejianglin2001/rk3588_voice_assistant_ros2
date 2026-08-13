@@ -128,10 +128,20 @@ void AudioVadNode::onTrigger(const std_msgs::msg::Empty::SharedPtr /*msg*/) {
                 bool v = vad_->IsVoice(vadBuf.data(), kFrame);
                 vadBuf.erase(vadBuf.begin(), vadBuf.begin() + kFrame);
                 if (state == kPending) {
-                    if (v) { if (++speechFrames >= kMinSpeech) state = kSpeaking; }
-                    else speechFrames = 0;
+                    if (v) {
+                        if (++speechFrames >= kMinSpeech) {
+                            state = kSpeaking;
+                            RCLCPP_INFO(get_logger(), "[vad] 检测到语音，开始说话");
+                        }
+                    } else {
+                        speechFrames = 0;
+                    }
                 } else {
-                    if (v) silenceFrames = 0; else if (++silenceFrames >= kSilence) goto done;
+                    if (v) silenceFrames = 0;
+                    else if (++silenceFrames >= kSilence) {
+                        RCLCPP_INFO(get_logger(), "[vad] 静音 %d 帧，结束录音", silenceFrames);
+                        goto done;
+                    }
                 }
             }
         }
@@ -140,6 +150,8 @@ void AudioVadNode::onTrigger(const std_msgs::msg::Empty::SharedPtr /*msg*/) {
     }
 #ifdef HAS_VAD
 done:
+    if (state != kSpeaking)
+        RCLCPP_WARN(get_logger(), "[vad] 全程未检测到语音（speechFrames=%d）", speechFrames);
 #endif
     if (buffer.size() < mic_->ActualSampleRate()) {
         RCLCPP_INFO(get_logger(), "太短，忽略");

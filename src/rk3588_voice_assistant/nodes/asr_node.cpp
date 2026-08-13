@@ -30,7 +30,11 @@ AsrNode::CallbackReturn AsrNode::on_configure(const rclcpp_lifecycle::State&) {
 }
 
 AsrNode::CallbackReturn AsrNode::on_activate(const rclcpp_lifecycle::State&) {
-    rclcpp::QoS audio_qos(rclcpp::QoSInitialization::from_rmw(rmw_qos_profile_sensor_data));
+    // 必须和 audio_vad_node 发布端对齐：best_effort + volatile。
+    // 若用 rmw_qos_profile_sensor_data（本板 reliable）会导致 RELIABILITY 不兼容，
+    // 音频一条都发不过来。
+    rclcpp::QoS audio_qos(5);
+    audio_qos.best_effort().durability_volatile();
     audio_sub_ = create_subscription<rk3588_voice_assistant_interfaces::msg::AudioChunk>(
         "/utterance_audio", audio_qos,
         std::bind(&AsrNode::onAudio, this, std::placeholders::_1));
