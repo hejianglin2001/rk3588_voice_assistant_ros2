@@ -16,7 +16,7 @@
 //   答: 用户体验 — 用户看到逐字输出感觉更快（首 token 延迟 vs 总延迟）
 //   技术原因 — 不缓存全部结果节省内存，支持提前中断生成
 // ============================================================================
-int RKLLMEngine::TokenCallback(RKLLMResult* result, void* /*userdata*/, LLMCallState state)
+int RKLLMEngine::TokenCallback(RKLLMResult* result, void* userdata, LLMCallState state)
 {
     if (state == RKLLM_RUN_FINISH) {
         printf("\n");
@@ -24,6 +24,8 @@ int RKLLMEngine::TokenCallback(RKLLMResult* result, void* /*userdata*/, LLMCallS
         printf("\n[llm] 推理出错\n");
     } else if (state == RKLLM_RUN_NORMAL) {
         printf("%s", result->text);  // 逐 token 打印
+        if (userdata)  // RunSync 传入 this，收集完整文本
+            static_cast<RKLLMEngine*>(userdata)->out_buf_ += result->text;
     }
     return 0;  // 返回 0 让推理继续
 }
@@ -110,6 +112,25 @@ void RKLLMEngine::Run(const std::string& prompt)
     printf("robot: ");
     fflush(stdout);
     rkllm_run(handle_, &input, &infer_param, nullptr);
+}
+
+std::string RKLLMEngine::RunSync(const std::string& prompt)
+{
+    if (handle_ == nullptr) return "";
+    out_buf_.clear();
+
+    RKLLMInput input;
+    std::memset(&input, 0, sizeof(input));
+    input.input_type   = RKLLM_INPUT_PROMPT;
+    input.prompt_input = const_cast<char*>(prompt.c_str());
+
+    RKLLMInferParam infer_param;
+    std::memset(&infer_param, 0, sizeof(infer_param));
+    infer_param.mode         = RKLLM_INFER_GENERATE;
+    infer_param.keep_history = 0;
+
+    rkllm_run(handle_, &input, &infer_param, this);  // userdata = this，回调里收集 out_buf_
+    return out_buf_;
 }
 
 // ============================================================================

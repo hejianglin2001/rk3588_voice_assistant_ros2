@@ -4,9 +4,16 @@
 #include "yolo/yolo_engine.hpp"
 #include "yolo/camera_capture.h"
 #include "yolo/rga_convert.h"
+// stb 单头文件 — 直接写 JPG，零外部依赖（替代手写 BMP，本地双击即看）
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "yolo/stb_image_write.h"
+#include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <thread>
 #include <unordered_map>
+#include <vector>
+#include <sys/stat.h>
 
 // 中文→COCO 类名映射（常用目标，匹配时归一化）
 // ponytail: 只覆盖演示常用词，缺的走英文原名直传
@@ -23,6 +30,57 @@ static const char* zhToEn(const std::string& s) {
     return it != m.end() ? it->second.c_str() : s.c_str();
 }
 
+// ---- 板端无屏：检测图落盘（画框 + 置信度 + 24-bit BMP，零依赖）----
+// ponytail: 只画数字置信度（0-9 .），类别靠文件名/日志，避免塞整套 ASCII 字体
+static const uint8_t kFont[12][7] = {
+    {0x0E,0x11,0x13,0x15,0x19,0x11,0x0E},  // 0
+    {0x04,0x0C,0x04,0x04,0x04,0x04,0x0E},  // 1
+    {0x0E,0x11,0x01,0x02,0x04,0x08,0x1F},  // 2
+    {0x1F,0x02,0x04,0x02,0x01,0x11,0x0E},  // 3
+    {0x02,0x06,0x0A,0x12,0x1F,0x02,0x02},  // 4
+    {0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E},  // 5
+    {0x06,0x08,0x10,0x1E,0x11,0x11,0x0E},  // 6
+    {0x1F,0x01,0x02,0x04,0x08,0x08,0x08},  // 7
+    {0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E},  // 8
+    {0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C},  // 9
+    {0x00,0x00,0x00,0x00,0x00,0x0C,0x0C},  // .
+    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // space
+};
+static const uint8_t* glyph(char c) {
+    if (c >= '0' && c <= '9') return kFont[c - '0'];
+    if (c == '.') return kFont[10];
+    return kFont[11];
+}
+static inline void setPx(uint8_t* rgb, int W, int H, int x, int y,
+                         uint8_t r, uint8_t g, uint8_t b) {
+    if (x < 0 || y < 0 || x >= W || y >= H) return;
+    uint8_t* p = rgb + (y * W + x) * 3;
+    p[0] = r; p[1] = g; p[2] = b;
+}
+static void drawBox(uint8_t* rgb, int W, int H, int x, int y, int w, int h) {
+    int x0 = std::max(0, x), y0 = std::max(0, y);
+    int x1 = std::min(W - 1, x + w - 1), y1 = std::min(H - 1, y + h - 1);
+    for (int t = 0; t < 3; ++t) {  // 3px 绿色边框
+        int lx = x0 + t, ly = y0 + t, rx = x1 - t, ry = y1 - t;
+        if (lx > x1 || ly > y1) break;
+        for (int px = lx; px <= rx; ++px) { setPx(rgb, W, H, px, ly, 0, 255, 0); setPx(rgb, W, H, px, ry, 0, 255, 0); }
+        for (int py = ly; py <= ry; ++py) { setPx(rgb, W, H, lx, py, 0, 255, 0); setPx(rgb, W, H, rx, py, 0, 255, 0); }
+    }
+}
+static void drawText(uint8_t* rgb, int W, int H, int x0, int y0,
+                     const std::string& s, int scale) {
+    int cx = x0;
+    for (char c : s) {
+        const uint8_t* g = glyph(c);
+        for (int r = 0; r < 7; ++r)
+            for (int col = 0; col < 5; ++col)
+                if (g[r] & (0x10 >> col))
+                    for (int dy = 0; dy < scale; ++dy)
+                        for (int dx = 0; dx < scale; ++dx)
+                            setPx(rgb, W, H, cx + col * scale + dx, y0 + r * scale + dy, 255, 255, 255);
+        cx += 6 * scale;
+    }
+}
 YoloNode::YoloNode(const rclcpp::NodeOptions& options)
     : LifecycleNode("yolo_node", options) {
     declare_parameter("model_path", "");
@@ -30,6 +88,7 @@ YoloNode::YoloNode(const rclcpp::NodeOptions& options)
     declare_parameter("camera_device", "/dev/video11");
     declare_parameter("camera_width", 1920);
     declare_parameter("camera_height", 1080);
+    declare_parameter("save_dir", "/home/topeet/code/rk3588_voice_assistant_ros2/yolo_out");
 }
 
 YoloNode::CallbackReturn YoloNode::on_configure(const rclcpp_lifecycle::State&) {
@@ -48,6 +107,10 @@ YoloNode::CallbackReturn YoloNode::on_configure(const rclcpp_lifecycle::State&) 
         RCLCPP_ERROR(get_logger(), "YOLO 模型加载失败: %s", path.c_str()); return CallbackReturn::FAILURE;
     }
     RCLCPP_INFO(get_logger(), "YOLO 模型就绪: %s", path.c_str());
+
+    save_dir_ = get_parameter("save_dir").as_string();
+    mkdir(save_dir_.c_str(), 0755);  // 已存在会 EEXIST，忽略
+    RCLCPP_INFO(get_logger(), "检测图保存目录: %s", save_dir_.c_str());
 
     // 打开摄像头
     cam_w_ = static_cast<int>(get_parameter("camera_width").as_int());
@@ -109,11 +172,12 @@ void YoloNode::execute(const std::shared_ptr<GoalHandle> gh) {
     float conf_th = static_cast<float>(get_parameter("conf_threshold").as_double());
     bool has_camera = (camera_ && camera_->IsOpen());
     const char* en_target = zhToEn(goal->target_class);  // 中文→英文归一化
+    bool saved = false;  // 每个 goal 只落盘最高置信度那一帧，避免刷满磁盘
 
     while (rclcpp::ok() && now() < deadline) {
         if (gh->is_canceling()) { gh->canceled(result); return; }
 
-        const uint8_t* rgb = nullptr;
+        uint8_t* rgb = nullptr;  // 画框落盘需可写
         uint8_t* rga_buf = nullptr;
 
         if (has_camera) {
@@ -131,6 +195,26 @@ void YoloNode::execute(const std::shared_ptr<GoalHandle> gh) {
         }
 
         auto dets = yolo_->Detect(rgb, 640, 640);
+
+        // 板端无屏：命中目标 → 画框，最高置信度帧落盘 BMP 供拉回查看
+        float best_hit = 0.0f; bool hit = false;
+        for (auto& d : dets) {
+            if (d.class_name == en_target && d.confidence >= conf_th) {
+                hit = true;
+                if (d.confidence > best_hit) best_hit = d.confidence;
+                drawBox(rgb, 640, 640, d.x, d.y, d.w, d.h);
+            }
+        }
+        if (hit && !saved) {
+            char name[256];
+            snprintf(name, sizeof(name), "%s/detect_%s_%d.jpg",
+                     save_dir_.c_str(), en_target, static_cast<int>(best_hit * 100));
+            drawText(rgb, 640, 640, 8, 8,
+                     std::to_string(static_cast<int>(best_hit * 100)), 2);
+            if (stbi_write_jpg(name, 640, 640, 3, rgb, 90))
+                RCLCPP_INFO(get_logger(), "已保存检测图: %s", name);
+            saved = true;
+        }
         free(rga_buf);
 
         auto fb = std::make_shared<YoloDetect::Feedback>();

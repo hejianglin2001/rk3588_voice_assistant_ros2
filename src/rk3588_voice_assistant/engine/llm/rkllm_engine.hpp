@@ -42,6 +42,10 @@ public:
     /// 结果通过内部 callback 实时打印到 stdout
     void Run(const std::string& prompt);
 
+    /// 同步推理并返回生成的完整文本（供抽词等结构化提取用）
+    /// 与 Run 区别：token 同时收集到字符串并返回，仍会打印到 stdout
+    std::string RunSync(const std::string& prompt);
+
     /// 清空对话历史，开始新一轮对话
     void ClearHistory();
 
@@ -55,4 +59,5 @@ private:
     static int TokenCallback(RKLLMResult* result, void* userdata, LLMCallState state);
 
     LLMHandle handle_ = nullptr;  // RKLLM C 接口的句柄
+    std::string out_buf_;         // RunSync 收集 token 的缓冲区
 };

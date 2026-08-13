@@ -80,42 +80,35 @@ void LlmNode::onReset(const std_srvs::srv::Empty::Request::SharedPtr,
 }
 
 // ---- 意图识别 ----
-std::string LlmNode::extractDetectTarget(const std::string& text) {
-    // 匹配: "找X" "寻找X" "找一下X" "find X" "检测X"
-    // 注意: std::regex 是字节级、不懂 Unicode，不能用 $ 锚点 + 多字节标点，
-    //       否则 "找苹果。" 会把 UTF-8 拆碎、尾部换行/空格会导致不匹配。
-    // 做法: 先去首尾空白 → 正则抓 \S+ → 再去尾部标点。
-    std::string t = text;
+// 只判断是不是"找/检测某物"的意图。目标词交给 LLM 抽——std::regex 字节级不懂中文，
+// "检测一下一个人你能不能检测到一个人" 这种长句正则抓不干净，LLM 能抽对。
+bool LlmNode::isDetectIntent(const std::string& text) {
+    static const std::regex re(R"((?:找|寻找|检测|find))", std::regex::icase);
+    return std::regex_search(text, re);
+}
+
+// LLM 抽词结果轻量清理：去首尾空白 + 尾部标点（字节级安全，不拆碎 UTF-8）
+static std::string cleanTarget(std::string t) {
     auto is_space = [](unsigned char c) { return std::isspace(c); };
     t.erase(t.begin(), std::find_if(t.begin(), t.end(),
         [&](unsigned char c) { return !is_space(c); }));
     t.erase(std::find_if(t.rbegin(), t.rend(),
         [&](unsigned char c) { return !is_space(c); }).base(), t.end());
-    if (t.empty()) return "";
-
-    static const std::regex re(
-        R"((?:找(?:一下|一个)?|寻找|检测|find)\s*(\S+))",
-        std::regex::icase);
-    std::smatch m;
-    if (!std::regex_search(t, m, re)) return "";
-    std::string target = m[1].str();
-
-    // 去尾部常见标点（字节级安全，避免拆碎 UTF-8）
     static const char* suffix[] = {
-        "。", "！", "？", "、", "，", ".", "!", "?", ",", ";", ":", "～", "~"};
+        "。", "！", "？", "、", "，", ".", "!", "?", ",", ";", ":", "～", "~", "\"", "'"};
     for (;;) {
         bool hit = false;
         for (auto s : suffix) {
             size_t n = std::strlen(s);
-            if (target.size() >= n && target.compare(target.size() - n, n, s) == 0) {
-                target.erase(target.size() - n);
+            if (t.size() >= n && t.compare(t.size() - n, n, s) == 0) {
+                t.erase(t.size() - n);
                 hit = true;
                 break;
             }
         }
         if (!hit) break;
     }
-    return target;
+    return t;
 }
 
 // ---- 调用 YOLO ----
@@ -155,15 +148,9 @@ void LlmNode::callYoloDetect(const std::string& target) {
             }
             RCLCPP_INFO(get_logger(), "YOLO 结果: %s", detection_info.c_str());
 
-            std::lock_guard<std::mutex> lock(llm_mutex_);
+            // 直接模板回复（确定性，不再调 LLM 总结——那次输出只打 stdout 是白跑的）
             auto out = std_msgs::msg::String();
-            if (llm_ && llm_->IsReady()) {
-                llm_->Run("用户让你找「" + target + "」。检测结果：" + detection_info
-                    + "。请用一句话告诉用户结果。");
-                out.data = "[robot]: " + detection_info;
-            } else {
-                out.data = "[robot]: " + detection_info;
-            }
+            out.data = "[robot]: " + detection_info;
             response_pub_->publish(out);
         };
 
@@ -175,9 +162,24 @@ void LlmNode::onText(const std_msgs::msg::String::SharedPtr msg) {
     if (msg->data.empty()) return;
     RCLCPP_INFO(get_logger(), "[text] %s", msg->data.c_str());
 
-    // 优先检测"找X"命令
-    auto target = extractDetectTarget(msg->data);
-    if (!target.empty()) {
+    // 检测意图 → LLM 抽词 → YOLO
+    if (isDetectIntent(msg->data)) {
+        std::string target;
+        {
+            std::lock_guard<std::mutex> lock(llm_mutex_);
+            if (!llm_ || !llm_->IsReady()) return;
+            target = llm_->RunSync(
+                "从下面这句话提取用户要找/检测的物体，只输出物体名（中文或英文，如「苹果」或「person」）。"
+                "没有明确物体就输出「无」。\n用户的话：" + msg->data);
+        }
+        target = cleanTarget(target);
+        if (target.empty() || target == "无") {
+            auto out = std_msgs::msg::String();
+            out.data = "[robot]: 没听清要找什么，能再说一遍吗？";
+            response_pub_->publish(out);
+            return;
+        }
+        RCLCPP_INFO(get_logger(), "LLM 抽词: %s", target.c_str());
         callYoloDetect(target);
         return;
     }

@@ -41,4 +41,5 @@ private:
     rclcpp_action::Server<YoloDetect>::SharedPtr action_server_;
 
     int cam_w_ = 1920, cam_h_ = 1080;  // camera capture resolution
+    std::string save_dir_;             // 检测图落盘目录（板端无屏，供拉回查看）
 };

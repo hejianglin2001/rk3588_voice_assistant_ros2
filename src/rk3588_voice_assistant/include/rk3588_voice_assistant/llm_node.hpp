@@ -43,8 +43,8 @@ private:
     void onReset(const std_srvs::srv::Empty::Request::SharedPtr,
                  std_srvs::srv::Empty::Response::SharedPtr);
 
-    // 意图识别：从文本中提取检测目标（"找苹果" → "苹果"），未匹配返回空
-    std::string extractDetectTarget(const std::string& text);
+    // 意图识别：只判断是否是"找/检测某物"的意图（目标词交给 LLM 抽，正则搞不定中文分词）
+    bool isDetectIntent(const std::string& text);
     // 发送 YOLO Action，异步回调中喂 LLM
     void callYoloDetect(const std::string& target);
 
