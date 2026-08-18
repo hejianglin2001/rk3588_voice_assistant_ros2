@@ -7,6 +7,8 @@ find_package(std_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
     msg/AudioChunk.msg
+    msg/VisionContext.msg
+    msg/TaskCommand.msg
     action/YoloDetect.action
     DEPENDENCIES std_msgs
 )

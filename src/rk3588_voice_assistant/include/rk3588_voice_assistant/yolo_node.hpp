@@ -10,6 +10,8 @@
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "rk3588_voice_assistant_interfaces/action/yolo_detect.hpp"
+#include "rk3588_voice_assistant_interfaces/msg/vision_context.hpp"
+#include "visualization_msgs/msg/marker_array.hpp"
 
 class YoloEngine;
 class CameraCapture;
@@ -39,6 +41,8 @@ private:
     std::unique_ptr<YoloEngine> yolo_;
     std::unique_ptr<CameraCapture> camera_;
     rclcpp_action::Server<YoloDetect>::SharedPtr action_server_;
+    rclcpp::Publisher<rk3588_voice_assistant_interfaces::msg::VisionContext>::SharedPtr ctx_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
 
     int cam_w_ = 1920, cam_h_ = 1080;  // camera capture resolution
     std::string save_dir_;             // 检测图落盘目录（板端无屏，供拉回查看）

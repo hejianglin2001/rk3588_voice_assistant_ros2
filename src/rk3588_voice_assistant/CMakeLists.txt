@@ -12,6 +12,7 @@ find_package(lifecycle_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(rk3588_voice_assistant_interfaces REQUIRED)
+find_package(visualization_msgs REQUIRED)
 
 # ============================================================================
 # C++17
@@ -135,11 +136,11 @@ endif()
 target_link_libraries(asr_node pthread dl)
 
 # ============================================================================
-# llm_node — 含 YOLO Action client
+# llm_node — 认知层（发 /task_command，不再直接调 YOLO）
 # ============================================================================
 add_executable(llm_node nodes/llm_node.cpp)
 target_include_directories(llm_node PRIVATE ${ENGINE_DIR} include)
-ament_target_dependencies(llm_node rclcpp rclcpp_lifecycle rclcpp_action std_msgs std_srvs)
+ament_target_dependencies(llm_node rclcpp rclcpp_lifecycle std_msgs std_srvs)
 target_link_libraries(llm_node rk3588_voice_assistant_interfaces::rk3588_voice_assistant_interfaces)
 target_link_libraries(llm_node rkllm_engine pthread dl)
 if(EXISTS "${RKLLM_DIR}/${TARGET_ARCH}/librkllmrt.so")
@@ -152,7 +153,7 @@ endif()
 if(TARGET yolo_engine)
     add_executable(yolo_node nodes/yolo_node.cpp)
     target_include_directories(yolo_node PRIVATE ${ENGINE_DIR} include)
-    ament_target_dependencies(yolo_node rclcpp rclcpp_lifecycle rclcpp_action)
+    ament_target_dependencies(yolo_node rclcpp rclcpp_lifecycle rclcpp_action visualization_msgs)
     target_link_libraries(yolo_node rk3588_voice_assistant_interfaces::rk3588_voice_assistant_interfaces)
     target_link_libraries(yolo_node yolo_engine pthread dl)
     # RGA 系统库（板端 /usr/lib/aarch64-linux-gnu/librga.so）
@@ -164,9 +165,17 @@ if(TARGET yolo_engine)
 endif()
 
 # ============================================================================
+# decision_node — 决策层（纯逻辑路由，普通 Node）
+# ============================================================================
+add_executable(decision_node nodes/decision_node.cpp)
+target_include_directories(decision_node PRIVATE ${ENGINE_DIR} include)
+ament_target_dependencies(decision_node rclcpp rclcpp_action std_msgs)
+target_link_libraries(decision_node rk3588_voice_assistant_interfaces::rk3588_voice_assistant_interfaces)
+
+# ============================================================================
 # Install
 # ============================================================================
-install(TARGETS audio_vad_node asr_node llm_node yolo_node
+install(TARGETS audio_vad_node asr_node llm_node yolo_node decision_node
     DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY launch config
     DESTINATION share/${PROJECT_NAME})

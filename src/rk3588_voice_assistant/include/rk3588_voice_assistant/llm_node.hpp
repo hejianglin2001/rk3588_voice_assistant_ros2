@@ -1,11 +1,16 @@
 // ============================================================================
-// llm_node — NPU 大模型推理 + YOLO 目标检测调用 (LifecycleNode)
+// llm_node — 认知层：NPU 大模型推理（LifecycleNode）
 //
-// Sub: /recognized_text (String) — ASR 结果
-// Sub: /text_input      (String) — 文字输入
-// Pub: /llm_response    (String) — LLM 回复
-// Srv: /reset_context   (Empty)  — 清空对话历史
-// Act: /yolo_detect     (Client) — 调用 YOLO 检测
+// 职责：把用户文本转成结构化任务命令，下发给决策层；并生成最终自然语言回答。
+// 不直接调用 YOLO——解耦认知层与执行层（通过 decision_node 路由）。
+//
+// Sub: /recognized_text (String)         — ASR 结果
+// Sub: /text_input      (String)         — 文字输入
+// Sub: /vision_context  (VisionContext)  — 画面物体上下文（视觉问答用）
+// Sub: /llm_query       (String)         — decision_node 拼接的最终回答请求
+// Pub: /task_command    (TaskCommand)    — 结构化任务命令
+// Pub: /llm_response    (String)         — 最终回复
+// Srv: /reset_context   (Empty)          — 清空对话历史 + 视觉上下文
 // ============================================================================
 #pragma once
 
@@ -15,10 +20,10 @@
 #include <string>
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
-#include "rclcpp_action/rclcpp_action.hpp"
 #include "std_msgs/msg/string.hpp"
 #include "std_srvs/srv/empty.hpp"
-#include "rk3588_voice_assistant_interfaces/action/yolo_detect.hpp"
+#include "rk3588_voice_assistant_interfaces/msg/task_command.hpp"
+#include "rk3588_voice_assistant_interfaces/msg/vision_context.hpp"
 
 class RKLLMEngine;
 
@@ -28,8 +33,6 @@ public:
     ~LlmNode() override = default;
 
     using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
-    using YoloDetect = rk3588_voice_assistant_interfaces::action::YoloDetect;
-    using GoalHandleYolo = rclcpp_action::ClientGoalHandle<YoloDetect>;
 
     CallbackReturn on_configure(const rclcpp_lifecycle::State&) override;
     CallbackReturn on_activate(const rclcpp_lifecycle::State&) override;
@@ -42,18 +45,22 @@ private:
     void onAsrResult(const std_msgs::msg::String::SharedPtr msg);
     void onReset(const std_srvs::srv::Empty::Request::SharedPtr,
                  std_srvs::srv::Empty::Response::SharedPtr);
+    void onVisionContext(const rk3588_voice_assistant_interfaces::msg::VisionContext::SharedPtr msg);
+    void onLlmQuery(const std_msgs::msg::String::SharedPtr msg);
 
     // 意图识别：只判断是否是"找/检测某物"的意图（目标词交给 LLM 抽，正则搞不定中文分词）
     bool isDetectIntent(const std::string& text);
-    // 发送 YOLO Action，异步回调中喂 LLM
-    void callYoloDetect(const std::string& target);
 
     std::unique_ptr<RKLLMEngine> llm_;
     std::mutex llm_mutex_;
 
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr asr_sub_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr text_sub_;
+    rclcpp::Subscription<rk3588_voice_assistant_interfaces::msg::VisionContext>::SharedPtr ctx_sub_;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr query_sub_;
+    rclcpp::Publisher<rk3588_voice_assistant_interfaces::msg::TaskCommand>::SharedPtr task_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr response_pub_;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr reset_srv_;
-    rclcpp_action::Client<YoloDetect>::SharedPtr yolo_client_;
+
+    std::string last_ctx_;   // 最近一帧画面物体上下文（视觉问答用）
 };

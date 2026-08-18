@@ -44,11 +44,17 @@ def generate_launch_description():
         arguments=['--ros-args', '--params-file', params_path],
         additional_env=env,
     )
+    # 决策层：纯逻辑路由，普通 Node（无需 lifecycle 转换，启动即就绪）
+    decision_node = Node(
+        package='rk3588_voice_assistant', executable='decision_node',
+        name='decision_node', output='screen',
+    )
 
     # ---- 按序 lifecycle 转换 ----
     def lifecycle_cmd(node, transition):
+        # --no-daemon：CLI 自建 participant 直连节点，绕开 daemon（daemon 常被旧配置污染，发现不了单播节点）
         return ['bash', '-c',
-            f'source /opt/ros/humble/setup.bash && ros2 lifecycle set {node} {transition}']
+            f'source /opt/ros/humble/setup.bash && ros2 lifecycle set {node} {transition} --no-daemon']
 
     return LaunchDescription([
         DeclareLaunchArgument('model_path',
@@ -58,7 +64,7 @@ def generate_launch_description():
         DeclareLaunchArgument('yolo_model',
             default_value='/home/topeet/code/rkllm_weight/yolo26n_split.rknn'),
 
-        llm_node, asr_node, audio_vad_node, yolo_node,
+        llm_node, asr_node, audio_vad_node, yolo_node, decision_node,
 
         TimerAction(period=1.0, actions=[
             ExecuteProcess(cmd=lifecycle_cmd('/llm_node', 'configure')),

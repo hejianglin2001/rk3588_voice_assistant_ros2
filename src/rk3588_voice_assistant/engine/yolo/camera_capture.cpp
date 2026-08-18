@@ -18,7 +18,9 @@ bool CameraCapture::Xioctl(int req, void* arg) {
 CameraCapture::~CameraCapture() { Close(); }
 
 bool CameraCapture::Open(const std::string& device, int w, int h) {
-    fd_ = open(device.c_str(), O_RDWR);
+    // O_NONBLOCK: MIPI 相机可能中途停流，阻塞 DQBUF 会卡死整个 executor（action 永不返回）。
+    // 非阻塞下 DQBUF 无帧时立即返回 EAGAIN → Capture() 返回空帧 → 上层走灰图兜底，deadline 正常退出。
+    fd_ = open(device.c_str(), O_RDWR | O_NONBLOCK);
     if (fd_ < 0) { perror("open camera"); return false; }
 
     struct v4l2_format fmt = {};

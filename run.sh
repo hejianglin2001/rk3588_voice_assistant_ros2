@@ -26,6 +26,10 @@ amixer -c 2 cset numid=43 off 2>/dev/null || true   # Headset Mic Switch = off
 source /opt/ros/humble/setup.bash
 source "$SCRIPT_DIR/install/setup.bash"
 
+# ---- 跨机 DDS：Cyclone DDS 单播，绕开 WiFi 上行组播隔离 ----
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI=file://$SCRIPT_DIR/cyclonedds.xml
+
 # ---- 启动 ----
 echo "============================================"
 echo "  RK3588 语音助手 (audio_vad → asr → llm → yolo)"

@@ -132,6 +132,15 @@ YoloNode::CallbackReturn YoloNode::on_configure(const rclcpp_lifecycle::State&) 
         std::bind(&YoloNode::handle_goal, this, std::placeholders::_1, std::placeholders::_2),
         std::bind(&YoloNode::handle_cancel, this, std::placeholders::_1),
         std::bind(&YoloNode::execute, this, std::placeholders::_1));
+
+    // 视觉上下文广播：检测期间持续发布画面物体，llm_node 保存供视觉问答
+    rclcpp::QoS ctx_qos(10);
+    ctx_qos.reliable().durability_volatile();
+    ctx_pub_ = create_publisher<rk3588_voice_assistant_interfaces::msg::VisionContext>(
+        "/vision_context", ctx_qos);
+    marker_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
+        "/yolo_markers", ctx_qos);
+
     return CallbackReturn::SUCCESS;
 }
 
@@ -216,6 +225,48 @@ void YoloNode::execute(const std::shared_ptr<GoalHandle> gh) {
             saved = true;
         }
         free(rga_buf);
+
+        // 发布画面物体上下文（置信度百分比，喂给 LLM 做视觉问答）
+        std::string objects;
+        for (auto& d : dets) {
+            if (d.confidence < conf_th) continue;
+            if (!objects.empty()) objects += ",";
+            objects += d.class_name + "("
+                     + std::to_string(static_cast<int>(d.confidence * 100)) + ")";
+        }
+        if (!objects.empty()) {
+            auto ctx = rk3588_voice_assistant_interfaces::msg::VisionContext();
+            ctx.objects = objects;
+            ctx_pub_->publish(ctx);
+        }
+
+        // 发布 bbox Marker 供 PC rviz2 可视化（图像坐标 y 向下，翻转为 rviz 的 y 向上）
+        visualization_msgs::msg::MarkerArray markers;
+        int mid = 0;
+        for (auto& d : dets) {
+            if (d.confidence < conf_th) continue;
+            visualization_msgs::msg::Marker m;
+            m.header.frame_id = "camera";
+            m.header.stamp = now();
+            m.ns = "yolo";
+            m.id = mid++;
+            m.type = visualization_msgs::msg::Marker::CUBE;
+            m.action = visualization_msgs::msg::Marker::ADD;
+            m.pose.position.x = d.x + d.w / 2.0f;
+            m.pose.position.y = 640.0f - (d.y + d.h / 2.0f);
+            m.pose.position.z = 0.0f;
+            m.pose.orientation.w = 1.0f;
+            m.scale.x = static_cast<double>(d.w);
+            m.scale.y = static_cast<double>(d.h);
+            m.scale.z = 0.01;
+            m.color.a = 0.6f;
+            m.color.r = 0.0f;
+            m.color.g = 1.0f;
+            m.color.b = 0.0f;
+            m.lifetime = rclcpp::Duration::from_seconds(1.0);
+            markers.markers.push_back(m);
+        }
+        marker_pub_->publish(markers);
 
         auto fb = std::make_shared<YoloDetect::Feedback>();
         fb->elapsed_sec = 0;
