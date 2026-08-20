@@ -17,12 +17,11 @@
 1. [硬件平台：RK3588 三硬件协同](#1-硬件平台rk3588-三硬件协同)
 2. [系统架构](#2-系统架构)
 3. [技术栈逐项剖析](#3-技术栈逐项剖析)
-4. [设计决策与面试话术](#4-设计决策与面试话术)
+
 5. [端到端数据流走查](#5-端到端数据流走查)
 6. [编译 / 运行 / 测试](#6-编译--运行--测试)
 7. [已知坑](#7-已知坑)
-8. [面试高频 Q&A](#8-面试高频-qa)
-9. [未来规划](#9-未来规划)
+
 
 ---
 
@@ -171,7 +170,7 @@ RK3588 是瑞芯微旗舰 SoC：8 核 CPU（4×A76 + 4×A55）、**3 核 NPU（6
 | YOLO 模型前向（卷积） | **NPU** | `rknn_run()` | 卷积矩阵乘是 NPU 的看家本事，6 TOPS 秒出结果 |
 | NMS 后处理（遍历 80×8400） | **CPU** | `postprocess()` | 非规则逻辑（排序、IoU、分支），NPU 不擅长，CPU 灵活 |
 
-> 💡 **面试考点**：为什么后处理不也放 NPU？NMS 是数据相关的串行逻辑（排序 + 条件抑制），NPU 适合规则的张量运算；硬塞 NPU 反而要反复搬运中间结果，更慢。**异构计算的本质是「把每类计算交给最擅长的硬件」**，不是什么都往 NPU 堆。
+
 
 ---
 
@@ -214,7 +213,7 @@ RK3588 是瑞芯微旗舰 SoC：8 核 CPU（4×A76 + 4×A55）、**3 核 NPU（6
 
 launch 文件用 `TimerAction` 按依赖错峰启动：LLM（最慢）先 configure → 12s 后 activate → ASR + YOLO 13s configure / 28s activate → audio_vad 最后 29s 起。
 
-> 💡 **面试话术**：「用 LifecycleNode 管理 NPU/麦克风等硬件资源，保证模型加载完成前不会收到推理请求——否则 plain Node 启动时 LLM 还在加载，ASR 消息先到，要么空指针要么超时。加载耗时 LLM ~10s、ASR ~15s、YOLO ~1s，所以 launch 里按最慢的 LLM 先起、错峰 transition。」
+
 
 ### 3.2 ROS2 QoS（服务质量分级）
 
@@ -227,7 +226,7 @@ launch 文件用 `TimerAction` 按依赖错峰启动：LLM（最慢）先 config
 | `/recognized_text` | Reliable | Volatile | 10 | 文本语义不能丢 |
 | `/llm_response` | Reliable | Volatile | 10 | 同上 |
 
-> 💡 **面试考点**：`Best Effort` 和 `Reliable` 是**不兼容**的两组 QoS，发布方和订阅方必须对齐，否则 DDS 会静默丢消息（本项目中 audio 若用默认 `rmw_qos_profile_sensor_data`=reliable 去订阅 best_effort 发布，音频一条都收不到，日志只刷 `RELIABILITY_QOS_POLICY` 警告）。这是踩过的真坑。
+
 
 ### 3.3 ROS2 Action（长任务建模）
 
@@ -243,7 +242,7 @@ launch 文件用 `TimerAction` 按依赖错峰启动：LLM（最慢）先 config
 
 client 端用 `async_send_goal` 带三个回调：`goal_response_callback`（server 是否接单）、`result_callback`（最终结果）、可选 `feedback_callback`（实时进度）。server 端 `execute()` 里循环抓帧 → 推理 → `publish_feedback`，被 cancel 时 `gh->canceled(result)`。
 
-> 💡 **面试话术**：「Action 是 ROS2 对『有生命周期、可反馈、可取消的异步任务』的一等公民建模。Topic 是单向数据流，Service 是同步一问一答，检测这种『开始—跑 N 秒—随时报进度—可取消』的语义，只有 Action 能完整表达。」
+
 
 ### 3.4 ROS2 Service vs Topic（接口选型）
 
@@ -283,8 +282,6 @@ kSpeaking ──连续 100 帧静音(kSilence=100, 2s)──→ 断句完成(don
 - **kSilence=100**：连续 2 秒静音判「说完」，这是中文语音的典型句间停顿。
 - VAD 模式 0（最保守，容易判有声）→ 3（最激进，容易判静音），当前 mode 2 是折中。
 
-> 💡 **面试考点**：VAD 是**能量/频谱特征 + 状态机**，不是简单的「响度阈值」。状态机加滞回（3 帧进入、100 帧退出）是为了抗抖动，避免一句话中间被切碎。
->
 > ⚠️ **遗留问题**：板端风扇/环境底噪被 VAD 判成语音，导致 2s 静音触发不了，实际会录满 10s 才发布。修法两条：mode 2→3（更激进判静音），或调低 `Capture Digital Volume`（numid 25，当前 192）。
 
 ### 3.7 sherpa-onnx ASR（离线识别）
@@ -310,8 +307,6 @@ infer_param.keep_history = 0;  // 不保留 KV cache（每轮独立）
 
 **流式 token 回调**：`rkllm_run` 不一次吐完，而是每生成一个 token 回调一次 `TokenCallback`，逐字打印。
 
-> 💡 **面试考点 1**：为什么用流式回调而不是全部生成完再返回？**首 token 延迟**——用户看到第一个字更快，体验上「更快」；且不用缓存全部结果，支持提前中断。
-> 💡 **面试考点 2**：`keep_history=0` 意味着每轮无上下文，所以 prompt 必须**自包含**（把任务要求写全）。代价是省 KV cache 内存、避免长对话显存膨胀；代价是记不住多轮对话。
 
 ### 3.9 RKNN YOLO 检测（NPU）
 
@@ -319,13 +314,12 @@ yolo26n，**split 双输出**：`bbox[4,8400]` + `score[80,8400]`（8400 = 3 个
 
 后处理全在 CPU：对 8400 个 anchor 求每个的 argmax 类别置信度 → 过滤 `conf_threshold=0.25` → **NMS（IoU 阈值 0.45）** → 输出 Detection 列表。
 
-> 💡 **面试考点**：`split` 是把 YOLO 的检测头拆成 bbox 和 score 两个输出张量，方便 RKNN 定点量化；NMS 是「非极大值抑制」，把同一目标上重叠的多个框合并成一个，核心指标是 IoU（交并比）。
 
 ### 3.10 RGA 硬件转换（不依赖 OpenCV）
 
 `rga_uyvy_to_rgb()`：UYVY(1920×1080) → RGB(640×640)，用 RGA 的 `imresize` 一步完成**格式转换 + 缩放**，1ms 级。
 
-> 💡 **面试考点**：为什么不用 OpenCV？① OpenCV 在 ARM 上吃 CPU 软解；② RGA 是硬件 DMA 搬运 + 硬件缩放，快一个数量级；③ 交叉编译 + 板端部署省一个重依赖。**嵌入式视觉里「预处理走硬件引擎」是标配**。
+
 
 ### 3.11 意图识别：规则（正则）+ LLM 抽词（混合）
 
@@ -343,7 +337,7 @@ yolo26n，**split 双输出**：`bbox[4,8400]` + `score[80,8400]`（8400 = 3 个
 
 **为什么正则不能抽词**：`std::regex` 是字节级的、不懂中文分词。「检测一下一个人你能不能检测到一个人」里哪个是目标（人）、哪个是虚词（一下/一个）、哪个是尾巴（你能不能…），正则抓 `\S+` 会把整句吞掉 → YOLO 拿垃圾串去匹配 class，必然未检测到。**这是踩过的真坑**，改成了「正则判意图 + LLM 抽词」两层。
 
-> 💡 **面试话术**：「意图识别我用规则 + LLM 混合：**确定性意图（有没有"找/检测"）用正则，快速零成本；开放性的槽位填充（具体找什么）交给 LLM**。纯规则搞不定中文分词的长尾，纯 LLM 又慢、输出格式不可控。分层是机器人意图识别的标准打法——类似 Function Calling 的简化版：LLM 输出结构化参数，我拿去调工具（YOLO）。」
+
 
 配套 `RKLLMEngine::RunSync(prompt) -> string`：跟 `Run`（只流式打印）的区别是 token 同时收进 buffer 返回，供抽词这种「要拿结果」的场景用。
 
@@ -372,7 +366,7 @@ yolo26n，**split 双输出**：`bbox[4,8400]` + `score[80,8400]`（8400 = 3 个
 
 **关键取舍**：`action` 字段（detect/chat）由**正则**判断而非 LLM 输出——0.8B 小模型的结构化输出不稳定（偶尔漏 key、混中文），正则判意图免费且确定，LLM 只负责抽词/生成（自由文本），规避了结构化输出的单点故障。
 
-> 💡 **面试话术**：「我把系统拆成感知/认知/决策/执行四层。认知层 LLM 不直接调用执行层，而是输出结构化 `TaskCommand` 交给决策节点路由——这样加新的执行能力（机械臂、导航）只改决策层，不动认知层。视觉检测结果通过 `VisionContext` 回注给 LLM 实现视觉问答，这是多模态智能体的雏形。」
+
 
 ### 3.14 RViz2 Marker 可视化（跨机 bbox 显示）
 
@@ -386,30 +380,11 @@ yolo26n，**split 双输出**：`bbox[4,8400]` + `score[80,8400]`（8400 = 3 个
 | `scale.x/y/z` | `d.w` / `d.h` / `0.01` | 框宽高即检测框宽高，z 压成 0.01 的薄片 |
 | `lifetime` | 1s | 检测期每 100ms 刷一次，停止后 1s 自动消失，不留残影 |
 
-> 💡 **面试考点**：坐标约定转换。摄像头给的像素坐标原点在**左上角（y 向下）**，rviz 三维坐标系 **y 向上**，二者差一个 `H - y` 的翻转——视觉落地最容易踩的「坐标系约定不一致」坑。frame_id 用 `camera` 而非搭 TF 树，是因为单相机无位姿变化，直接以相机为世界原点即可，省掉 robot_state_publisher 的复杂度。
->
-> ⚠️ **已知小瑕疵**：marker 坐标目前是**图像像素**（0–640），rviz 里盒子会出现在网格原点偏上角、且是 640 单位级别，需拉远视角看（`yolo_rviz.rviz` 已把 Orbit 距离设 1000、焦点设 (320,320)）。要改米制，在 yolo_node 里把 `position`/`scale` 除以 640 即可，属板端小改。
 
----
 
-## 4. 设计决策与面试话术
 
-| 决策 | 为什么 | 面试话术 |
-|------|--------|---------|
-| LifecycleNode 而非 plain Node | 模型加载慢，要状态机保证就绪 | 「硬件资源生命周期显式管理」 |
-| 音频 Best Effort / 文本 Reliable | 音频可丢帧、文本不能丢 | 「QoS 分级，按数据语义选可靠性」 |
-| Action 做检测 | 长任务 + 反馈 + 可取消 | 「Topic 管不了 cancel，Service 是同步的」 |
-| RGA 预处理 | 硬件转换比 CPU 快一个数量级 | 「预处理走硬件引擎」 |
-| 意图：正则 + LLM 分层 | 规则快且确定，LLM 会抽词 | 「确定性意图规则、开放性槽位 LLM」 |
-| keep_history=0 | 省 KV cache，单轮足够 | 「无状态推理，prompt 自包含」 |
-| 流式 token 回调 | 首 token 延迟低 | 「体验优先，逐字输出」 |
-| NPU 串行（LLM/YOLO 不同时跑） | 单发单收业务天然错开 | 「当前串行，未来并发用 core mask 隔离」 |
-| 接口独立 `*_interfaces` 包 | 接口被多包共享，纯 rosidl 无 runtime | 「接口与实现解耦」 |
-| engine/ 与 nodes/ 分离 | 硬件封装与 ROS 胶水层解耦 | 「引擎层不依赖 ROS，可独立测试/换后端」 |
-| 决策层解耦（TaskCommand + DecisionNode） | 认知层不直接调执行层，加能力只改决策层 | 「感知-认知-决策-执行四层，命令与执行解耦」 |
-| 视觉上下文回注（VisionContext） | 让 LLM 基于真实画面回答而非编造 | 「检测结果注入 prompt，实现视觉问答」 |
 
----
+
 
 ## 5. 端到端数据流走查
 
@@ -545,7 +520,7 @@ export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export CYCLONEDDS_URI=file://$SCRIPT_DIR/cyclonedds.xml   # 注意：不是 CYCLONE_DDS_URI
 ```
 
-> 💡 **面试考点**：DDS 端口机制。单播发现要求每个 participant 有**固定的 well-known 端口**（domain 0 下 = `7410 + 2×participant_index`，每个进程占 discovery/data 两个连续端口），对端才能预知往哪发。所以必须 `ParticipantIndex=auto`（从 0 往上 probe 找空闲端口）；默认 `none` 会拿内核随机端口，对端无法预知，单播发现就废了。这就是「**单播必须配 participant index**」的根因。
+
 
 ### RViz2 可视化（PC 端）
 
@@ -616,48 +591,6 @@ Cyclone 0.10.5 里 `NetworkInterfaceAddress` 已**弃用**（打 warning 但功�
 
 ---
 
-## 8. 面试高频 Q&A
-
-**Q1：为什么音频用 Best Effort，不怕丢吗？**
-A：ASR 对「丢几帧」不敏感（几十 ms 的音频缺失不影响整句语义），但 Best Effort 省掉 DDS 的 ACK 往返，降延迟。文本语义完整才必须 Reliable。这是「按数据语义选 QoS」。
-
-**Q2：LLM 和 YOLO 都在 NPU 上，会不会抢？**
-A：当前业务是单发单收，LLM 推理和 YOLO 推理天然串行（说「找苹果」只跑 YOLO，检测完才让 LLM 生成总结），不同时占 NPU。真要并发（边检测边播报），给 RKLLM 设 NPU core mask，留一个 core 给 YOLO。
-
-**Q3：为什么不直接用 OpenCV 做图像预处理？**
-A：OpenCV 是 CPU 软解，RGA 是硬件 DMA + 硬件缩放，快一个数量级，还省一个重依赖。嵌入式视觉预处理走硬件引擎是标配。
-
-**Q4：意图识别为什么正则 + LLM 混合，不纯用 LLM？**
-A：纯 LLM 每次都要跑一次推理（慢 + 输出格式不可控），纯正则搞不定中文分词（长句抓不干净）。分层：确定性意图用正则（零成本），开放性槽位用 LLM（它擅长）。
-
-**Q5：keep_history=0 有什么取舍？**
-A：省 KV cache 内存、避免长对话显存膨胀，但每轮无上下文，prompt 必须自包含。当前单轮问答够用，多轮对话需求起来再开。
-
-**Q6：miniaudio 回调为什么只做 memcpy？**
-A：回调跑在 ALSA 高优先级实时线程，做 malloc/加锁/IO 会阻塞音频 DMA，导致丢帧或爆音。无锁写 RingBuffer，业务线程异步消费。
-
-**Q7：Action 和 Service 怎么选？**
-A：一次性同步 → Service；单向数据流 → Topic；有生命周期、可反馈、可取消的长任务 → Action。检测是第三类。
-
-**Q8：为什么跨机用 Cyclone DDS 单播，不用默认组播？**
-A：板端 WiFi 走 AP，开了 AP 隔离把上行组播拦了，默认 DDS 的组播发现收不到对端。单播把对端 IP 写进 `Peers` 直连，绕开组播；代价是要手动维护 IP 列表 + 固定 participant 端口（`ParticipantIndex=auto`）。
-
-**Q9：DDS 的 participant index 是什么？为什么单播必须有它？**
-A：单播发现要求每个进程有**固定端口**供对端预知，端口号 = `7410 + 2×index`（domain 0），每个进程占 discovery/data 两个连续端口。`auto` 让 Cyclone 从 0 往上 probe 找空闲的；`none` 用内核随机端口，对端没法预知，单播就发现不了。进程多了用 `MaxAutoParticipantIndex` 抬上限。
-
-**Q10：跨机可视化的坐标系怎么处理？要不要 TF 树？**
-A：本项目单相机无位姿、无机械臂，直接把 `camera` 帧当世界原点，rviz 的 Fixed Frame 设 `camera` 即可，不搭 TF 树。跨机只传检测框数据、不传位姿，所以不涉及 TF 同步和时间戳对齐；真到多传感器融合才需要 ros2 的 clock/tf 统一。
 
 ---
 
-## 9. 未来规划
-
-| 项目 | 为什么暂不做 |
-|------|-------------|
-| 目标跟踪（ByteTrack/DeepSORT） | 当前是逐帧检测取最高置信度，tracking 需时序关联，独立 feature |
-| TTS（piper-tts） | 需额外模型 + C API 封装，LLM 文本输出已满足 demo |
-| diagnostic_updater | 单节点健康 service 已够，批量监控再加 |
-| ComposableNode | AudioChunk 零拷贝收益小，相机独立进程更稳 |
-| lifecycle_manager 节点 | 当前 TimerAction + ExecuteProcess 已可靠 |
-| 中文类名全覆盖 | 当前映射 23 个常用词 + LLM 抽词兜底，全量 80 类再补 |
-| NPU core mask 隔离 | 等「边检测边对话」并发需求出现再加 |
