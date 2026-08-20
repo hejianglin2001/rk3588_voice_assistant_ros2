@@ -265,7 +265,7 @@ client 端用 `async_send_goal` 带三个回调：`goal_response_callback`（ser
 
 音频数据用 `RingBuffer<int16_t>`（SPSC 无锁队列）缓冲，业务线程（ROS 回调）在 `ReadSamples` 里消费。
 
-> 💡 **面试考点**：生产者-消费者解耦 + 无锁。音频是硬实时流，回调里不能做任何可能阻塞的事；用无锁环形缓冲把「中断上下文」和「业务逻辑」隔开。
+
 
 ### 3.6 WebRTC VAD 断句（状态机）
 
@@ -291,7 +291,7 @@ zh-small int8 量化模型（encoder / decoder / joiner 三件套），16kHz 单
 - 优先找 `.int8.onnx` 量化版（更小更快），否则回退 FP32。
 - 封装成 `SherpaASR::Recognize(samples, n) -> string`，输入 PCM 输出汉字。
 
-> 💡 **面试考点**：ASR 是「编码器-解码器 + 连接时序分类（transducer/CTC）」结构，int8 量化在不明显掉点的情况下把模型体积和推理耗时砍半，是端侧部署的标配手段。
+
 
 ### 3.8 RKLLM 大模型推理（NPU）
 
